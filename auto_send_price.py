@@ -38,72 +38,72 @@ for row in cursor:
     inboundpartialdate = row[4]
     maxstop = row[5] + 1
 
-    url = "https://" + rapidapi_host + "/apiservices/pricing/v1.0"
-    payload = "inboundDate=" + inboundpartialdate + "&cabinClass=economy&children=0&infants=0&country=" + country + "&currency=" + currency + "&locale=" + locale + "&originPlace=" + originplace + "-sky&destinationPlace=" + destinationplace + "-sky&outboundDate=" + outboundpartialdate + "&adults=" + str(
-        adults)
-    response = requests.request("POST", url, data=payload, headers=headers)
-    print(response)
-    print(response.headers['location'].split("/")[-1])
+    url = "https://" + rapidapi_host + "/apiservices/browseroutes/v1.0/" + country + "/" + currency + "/" + locale + "/" + originplace + "-sky/" + destinationplace + "-sky/" + outboundpartialdate + "/" + inboundpartialdate
 
-    sleep(30)
-
-    url = "https://" + rapidapi_host + "/apiservices/pricing/uk2/v1.0/" + response.headers['location'].split("/")[-1]
-    querystring = {"sortType": "price", "sortOrder": "asc", "pageSize": "100"}
-    response = requests.request("GET", url, headers=headers, params=querystring)
-
+    response = requests.request("GET", url, headers=get_header)
     res = response.json()
-    agents_list = pd.DataFrame(res['Agents']).drop_duplicates('Id').set_index('Id')
-    leg_list = pd.DataFrame(res['Legs']).drop_duplicates('Id').set_index('Id')
-    carriers_list = pd.DataFrame(res['Carriers']).drop_duplicates('Id').set_index('Id')
 
-    i = 0
-    res_list = list()
-    while i < len(res['Itineraries']):
-        if any(leg_list.loc[res['Itineraries'][i]['OutboundLegId']]['OperatingCarriers']) in excludeCarriers:
-            pass
-        elif any(leg_list.loc[res['Itineraries'][i]['InboundLegId']]['OperatingCarriers']) in excludeCarriers:
-            pass
-        elif len(leg_list.loc[res['Itineraries'][i]['OutboundLegId']]['Stops']) >= maxstop:
-            # print((leg_list.loc[res['Itineraries'][i]['OutboundLegId']]['Stops']))
-            pass
-        elif len(leg_list.loc[res['Itineraries'][i]['InboundLegId']]['Stops']) >= maxstop:
-            # print((leg_list.loc[res['Itineraries'][i]['InboundLegId']]['Stops']))
-            pass
-        else:
-            j = 0
-            while j < len(res['Itineraries'][i]['PricingOptions']):
-                if res['Itineraries'][i]['PricingOptions'][j]['Agents'][0] in excludeAgents:
-                    pass
-                else:
-                    direct_link = requests.request("GET", "https://tinyurl.com/api-create.php?" +
-                                                   res['Itineraries'][i]['PricingOptions'][j]['DeeplinkUrl']).text
-                    res_list.append([agents_list.loc[res['Itineraries'][i]['PricingOptions'][j]['Agents'][0]]['Name'],
-                                     res['Itineraries'][i]['PricingOptions'][j]['Price'],
-                                     direct_link,
-                                     leg_list.loc[res['Itineraries'][i]['OutboundLegId']]['Departure'].split('T')[0],
-                                     leg_list.loc[res['Itineraries'][i]['InboundLegId']]['Departure'].split('T')[0]])
-                j = j + 1
-        i = i + 1
+    if len(pd.DataFrame(res['Quotes'])) != 0:
 
-    df = pd.DataFrame(res_list)
+        outbound_leg_list = pd.DataFrame(res['Quotes'])['OutboundLeg']
+        inbound_leg_list = pd.DataFrame(res['Quotes'])['InboundLeg']
+        min_price = pd.DataFrame(res['Quotes'])['MinPrice']
 
-    agent_min = df[df[1] == df[1].min()][0].iloc[-1]
-    price_min = str(int(df[df[1] == df[1].min()][1].iloc[-1]))
-    print(price_min)
-    go_date_min = df[df[1] == df[1].min()][3].iloc[-1]
-    leave_date_min = df[df[1] == df[1].min()][4].iloc[-1]
-    direct_link = df[df[1] == df[1].min()][2].iloc[-1]
+        carrierid_filter = list()
 
-    c_res = conn.cursor()
-    cursor_res = c_res.execute("SELECT * from RES where ID=" + str(task_id))
-    flag = 0
-    for row in cursor_res:
-        flag = 1
-        print("Previous price = " + str(int(row[1])) + " Now price = " + str(int(float(price_min))))
-        if int(row[1]) != int(float(price_min)):
-            link_min = "https://www.skyscanner.com.tw/transport/flights/" + originplace + "/" + destinationplace + "/" + go_date_min + "/" + leave_date_min + "/?adults=1&children=0&adultsv2=1&childrenv2=&infants=0&cabinclass=economy&rtn=1&preferdirects=false&outboundaltsenabled=false&inboundaltsenabled=false"
-            line_info = "從" + originplace + "到" + destinationplace + "在" + go_date_min + "出發" + leave_date_min + "回程  最低價為: " + price_min + "(" + agent_min + ")" + " 前次價格為: " + str(
-                row[1]) + " 訂票連結:" + direct_link + " skyscanner:" + link_min
+        df_outbound_leg = pd.DataFrame(outbound_leg_list[0])
+        if df_outbound_leg["CarrierIds"][0] in excludeCarriers:
+            carrierid_filter = carrierid_filter.append(0)
+
+        i = 1
+        while i < len(outbound_leg_list):
+            tmp = pd.DataFrame(outbound_leg_list[i])
+            if tmp["CarrierIds"][0] in excludeCarriers:
+                if i not in carrierid_filter:
+                    carrierid_filter = carrierid_filter.append(i)
+            df_outbound_leg = df_outbound_leg.append(tmp)
+            i += 1
+        df_outbound_leg = df_outbound_leg.reset_index(drop=True)
+
+        df_inbound_leg = pd.DataFrame(inbound_leg_list[0])
+        i = 1
+        while i < len(inbound_leg_list):
+            tmp = pd.DataFrame(inbound_leg_list[i])
+            if tmp["CarrierIds"][0] in excludeCarriers:
+                if i not in carrierid_filter:
+                    carrierid_filter = carrierid_filter.append(i)
+            df_inbound_leg = df_inbound_leg.append(tmp)
+            i += 1
+        df_inbound_leg = df_inbound_leg.reset_index(drop=True)
+
+        for drop_index in carrierid_filter:
+            min_price.drop(drop_index)
+
+        price_sorted = min_price.sort_values()
+        lowest_price_index = price_sorted.index[0]
+
+        price_min = int(price_sorted.iloc[0])
+        go_date_min = datetime.strptime(df_outbound_leg.loc[lowest_price_index]["DepartureDate"],
+                                        "%Y-%m-%dT00:00:00").strftime("%y%m%d")
+        leave_date_min = datetime.strptime(df_inbound_leg.loc[lowest_price_index]["DepartureDate"],
+                                           "%Y-%m-%dT00:00:00").strftime("%y%m%d")
+
+        go_date_min_text = datetime.strptime(df_outbound_leg.loc[lowest_price_index]["DepartureDate"],
+                                             "%Y-%m-%dT00:00:00").strftime("%Y-%m-%d")
+        leave_date_min_text = datetime.strptime(df_inbound_leg.loc[lowest_price_index]["DepartureDate"],
+                                                "%Y-%m-%dT00:00:00").strftime("%Y-%m-%d")
+
+        c_res = conn.cursor()
+        cursor_res = c_res.execute("SELECT * from RES where ID=" + str(task_id))
+        res_db = cursor_res.fetchall()
+
+        link_min = "https://www.skyscanner.com.tw/transport/flights/" + originplace + "/" + destinationplace + "/" + go_date_min + "/" + leave_date_min + "/?adults=1&children=0&adultsv2=1&childrenv2=&infants=0&cabinclass=economy&rtn=1&preferdirects=false&outboundaltsenabled=false&inboundaltsenabled=false"
+
+        if len(res_db) != 0:
+            print("Previous price = " + str(int(res_db[0][1])) + " Now price = " + str(int(float(price_min))))
+
+            line_info = "從" + originplace + "到" + destinationplace + "在" + go_date_min_text + "出發" + leave_date_min_text + "回程  最低價為: " + str(
+                price_min) + " 前次價格為: " + str(int(res_db[0][1])) + " skyscanner:" + link_min
 
             c_mod = conn.cursor()
             c_mod.execute("UPDATE RES set PRICE = " + str(price_min) + " where ID=" + str(task_id))
@@ -111,15 +111,15 @@ for row in cursor:
             c_mod.execute("UPDATE RES set LEAVE_DATE = " + leave_date_min + " where ID=" + str(task_id))
             conn.commit()
 
-            line_send_link = "https://maker.ifttt.com/trigger/flight_price/with/key/" + ifttt_key + "?value1=" + line_info
-            requests.get(url=line_send_link)
-    if flag == 0:
-        link_min = "https://www.skyscanner.com.tw/transport/flights/" + originplace + "/" + destinationplace + "/" + go_date_min + "/" + leave_date_min + "/?adults=1&children=0&adultsv2=1&childrenv2=&infants=0&cabinclass=economy&rtn=1&preferdirects=false&outboundaltsenabled=false&inboundaltsenabled=false"
-        line_info = "從" + originplace + "到" + destinationplace + "在" + go_date_min + "出發" + leave_date_min + "回程  最低價為: " + price_min + "(" + agent_min + ")" + " 訂票連結:" + direct_link + " skyscanner:" + link_min
-        c_ins = conn.cursor()
-        c_ins.execute("INSERT INTO RES (ID,PRICE,GO_DATE,LEAVE_DATE) VALUES (" + str(
-            task_id) + ", '" + price_min + "','" + go_date_min + "','" + leave_date_min + "' )");
-        conn.commit()
+        else:
+            line_info = "從" + originplace + "到" + destinationplace + "在" + go_date_min_text + "出發" + leave_date_min_text + "回程  最低價為: " + str(
+                price_min) + " skyscanner:" + link_min
+
+            c_ins = conn.cursor()
+            c_ins.execute("INSERT INTO RES (ID,PRICE,GO_DATE,LEAVE_DATE) VALUES (" + str(
+                task_id) + ", '" + price_min + "','" + go_date_min + "','" + leave_date_min + "' )");
+            conn.commit()
+
         line_send_link = "https://maker.ifttt.com/trigger/flight_price/with/key/" + ifttt_key + "?value1=" + line_info
         requests.get(url=line_send_link)
 
